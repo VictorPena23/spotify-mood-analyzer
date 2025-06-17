@@ -3,95 +3,131 @@ import React, { useEffect, useState } from 'react';
 function App() {
   const [accessToken, setAccessToken] = useState("");
   const [playlists, setPlaylists] = useState([]);
-  const [tokenRequested, setTokenRequested] = useState(false);
+  const [mood, setMood] = useState(null);
 
-  // Step 1: Exchange code for access token
+  // Step 1: Get access token from URL params
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
 
-    if (code && !accessToken && !tokenRequested) {
-      setTokenRequested(true); // prevent double request
-
+    if (code && !accessToken) {
       fetch(`http://localhost:5000/get-token?code=${code}`)
         .then(res => res.json())
         .then(data => {
           if (data.access_token) {
             setAccessToken(data.access_token);
-            console.log("Access Token:", data.access_token);
-
-            // ✅ Clear the code from the URL
-            setTimeout(() => {
-  window.history.replaceState({}, document.title, "/");
-}, 100);
-
+            window.history.replaceState({}, document.title, "/");
           } else {
             console.error("Token exchange failed:", data);
           }
-        })
-        .catch(err => console.error("Error exchanging token:", err));
+        });
     }
-  }, [accessToken, tokenRequested]);
-
-  // Step 2: Fetch playlists once token is available
-  useEffect(() => {
-    if (!accessToken) return;
-
-    fetch("https://api.spotify.com/v1/me/playlists", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    })
-      .then(res => res.json())
-      .then(data => {
-        console.log("Playlists:", data);
-        setPlaylists(data.items || []);
-      })
-      .catch(err => {
-        console.error("Failed to fetch playlists:", err);
-      });
   }, [accessToken]);
 
-  // Step 3: Fetch tracks from the first playlist
-useEffect(() => {
-  if (!accessToken || playlists.length === 0) return;
+  // Step 2: Fetch user playlists
+  useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
 
-  const playlistId = playlists[0].id;
+  if (code && !accessToken) {
+    fetch(`http://localhost:5000/get-token?code=${code}`)
+      .then(res => res.json())
+      .then(data => {
+        console.log("🔐 Received token data:", data); // ✅ Add this
+        if (data.access_token) {
+          setAccessToken(data.access_token);
+          window.history.replaceState({}, document.title, "/");
+        } else {
+          console.error("Token exchange failed:", data);
+        }
+      })
+      .catch(err => console.error("Error exchanging token:", err));
+  }
+}, [accessToken]);
 
-  fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  })
-    .then(res => res.json())
-    .then(data => {
-      console.log("🎵 Tracks in Playlist:");
-      data.items.forEach((item, index) => {
-        const track = item.track;
-        console.log(`${index + 1}. ${track.name} by ${track.artists.map(a => a.name).join(", ")}`);
-      });
-    })
-    .catch(err => {
-      console.error("Error fetching tracks:", err);
+
+  // Step 3: Fetch and analyze playlist mood
+const analyzeMood = async (playlistId) => {
+  try {
+    console.log("Analyzing playlist:", playlistId);
+
+    const trackRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
-}, [accessToken, playlists]);
+
+    const trackData = await trackRes.json();
+    if (!trackRes.ok) {
+      console.error("Error fetching tracks:", trackData);
+      return;
+    }
+
+    const trackIds = trackData.items
+      .map(item => item.track?.id)
+      .filter(Boolean)
+      .slice(0, 100); // Enforce 100-track limit
+
+    if (trackIds.length === 0) {
+      console.warn("No valid tracks to analyze.");
+      return;
+    }
+
+    const audioFeatureUrl = `https://api.spotify.com/v1/audio-features?ids=${trackIds.join(',')}`;
+    console.log("Fetching audio features:", audioFeatureUrl);
+
+    const featureRes = await fetch(audioFeatureUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const featureData = await featureRes.json();
+    if (!featureRes.ok) {
+      console.error("Audio features fetch error:", featureData);
+      return;
+    }
+
+    const features = featureData.audio_features?.filter(f => f) || [];
+    const avg = (key) =>
+      (features.reduce((acc, curr) => acc + curr[key], 0) / features.length).toFixed(2);
+
+    setMood({
+      valence: avg("valence"),
+      energy: avg("energy"),
+      danceability: avg("danceability"),
+    });
+  } catch (error) {
+    console.error("Unexpected error during mood analysis:", error);
+  }
+};
 
 
   return (
     <div>
       <h1>Spotify Mood Analyzer</h1>
-      {accessToken ? (
+
+      {!accessToken ? (
+        <a href="http://localhost:5000/login">Login with Spotify</a>
+      ) : (
         <>
-          <p>You're logged in! Token is stored ✅</p>
+          <p>You're logged in ✅</p>
           <h2>Your Playlists:</h2>
           <ul>
-            {playlists.map((playlist) => (
-              <li key={playlist.id}>{playlist.name}</li>
+            {playlists.map(playlist => (
+              <li key={playlist.id}>
+                <button onClick={() => analyzeMood(playlist.id)}>
+                  {playlist.name}
+                </button>
+              </li>
             ))}
           </ul>
         </>
-      ) : (
-        <a href="http://localhost:5000/login">Login with Spotify</a>
+      )}
+
+      {mood && (
+        <div>
+          <h2>Playlist Mood Analysis</h2>
+          <p>Valence (Happiness): {mood.valence}</p>
+          <p>Energy: {mood.energy}</p>
+          <p>Danceability: {mood.danceability}</p>
+        </div>
       )}
     </div>
   );
