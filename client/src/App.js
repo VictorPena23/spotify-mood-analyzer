@@ -11,90 +11,70 @@ function App() {
     const code = params.get("code");
 
     if (code && !accessToken) {
-      fetch(`http://localhost:5000/get-token?code=${code}`)
+      fetch(`http://127.0.0.1:5000/get-token?code=${code}`)
         .then(res => res.json())
         .then(data => {
+          console.log("🔐 Received token data:", data);
           if (data.access_token) {
             setAccessToken(data.access_token);
             window.history.replaceState({}, document.title, "/");
           } else {
-            console.error("Token exchange failed:", data);
+            console.error("❌ Token exchange failed:", data);
           }
-        });
+        })
+        .catch(err => console.error("❌ Error exchanging token:", err));
     }
   }, [accessToken]);
 
   // Step 2: Fetch user playlists
   useEffect(() => {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
+    if (!accessToken) return;
 
-  if (code && !accessToken) {
-    fetch(`http://localhost:5000/get-token?code=${code}`)
+    fetch("https://api.spotify.com/v1/me/playlists", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
       .then(res => res.json())
       .then(data => {
-        console.log("🔐 Received token data:", data); // ✅ Add this
-        if (data.access_token) {
-          setAccessToken(data.access_token);
-          window.history.replaceState({}, document.title, "/");
-        } else {
-          console.error("Token exchange failed:", data);
-        }
+        console.log("🎵 Playlists:", data);
+        setPlaylists(data.items || []);
       })
-      .catch(err => console.error("Error exchanging token:", err));
-  }
-}, [accessToken]);
+      .catch(err => console.error("❌ Failed to fetch playlists:", err));
+  }, [accessToken]);
 
+  // Step 3: Analyze playlist mood
+ const analyzeMood = async () => {
+  const testTrackIds = ["0uMZbmAAgOhdMrv25iPEH6"]; // use 1–2 valid track IDs
 
-  // Step 3: Fetch and analyze playlist mood
-const analyzeMood = async (playlistId) => {
+  console.log("🧪 Testing with track:", testTrackIds);
+
+  const featureUrl = `https://api.spotify.com/v1/audio-features?ids=${testTrackIds.join(",")}`;
+  console.log("🎧 Testing URL:", featureUrl);
+  console.log("🪪 Token used:", accessToken);
+
   try {
-    console.log("Analyzing playlist:", playlistId);
-
-    const trackRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const res = await fetch(featureUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
     });
 
-    const trackData = await trackRes.json();
-    if (!trackRes.ok) {
-      console.error("Error fetching tracks:", trackData);
+    const data = await res.json();
+
+    if (!res.ok) {
+      console.error("❌ Failed to fetch features:", data);
       return;
     }
 
-    const trackIds = trackData.items
-      .map(item => item.track?.id)
-      .filter(Boolean)
-      .slice(0, 100); // Enforce 100-track limit
-
-    if (trackIds.length === 0) {
-      console.warn("No valid tracks to analyze.");
-      return;
-    }
-
-    const audioFeatureUrl = `https://api.spotify.com/v1/audio-features?ids=${trackIds.join(',')}`;
-    console.log("Fetching audio features:", audioFeatureUrl);
-
-    const featureRes = await fetch(audioFeatureUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
-    const featureData = await featureRes.json();
-    if (!featureRes.ok) {
-      console.error("Audio features fetch error:", featureData);
-      return;
-    }
-
-    const features = featureData.audio_features?.filter(f => f) || [];
-    const avg = (key) =>
-      (features.reduce((acc, curr) => acc + curr[key], 0) / features.length).toFixed(2);
-
+    console.log("✅ Audio Features:", data);
     setMood({
-      valence: avg("valence"),
-      energy: avg("energy"),
-      danceability: avg("danceability"),
+      valence: data.audio_features[0].valence,
+      energy: data.audio_features[0].energy,
+      danceability: data.audio_features[0].danceability,
     });
-  } catch (error) {
-    console.error("Unexpected error during mood analysis:", error);
+  } catch (err) {
+    console.error("💥 Unexpected error:", err);
   }
 };
 
@@ -104,20 +84,21 @@ const analyzeMood = async (playlistId) => {
       <h1>Spotify Mood Analyzer</h1>
 
       {!accessToken ? (
-        <a href="http://localhost:5000/login">Login with Spotify</a>
+        <a href="http://127.0.0.1:5000/login">Login with Spotify</a>
       ) : (
         <>
           <p>You're logged in ✅</p>
           <h2>Your Playlists:</h2>
-          <ul>
-            {playlists.map(playlist => (
-              <li key={playlist.id}>
-                <button onClick={() => analyzeMood(playlist.id)}>
-                  {playlist.name}
-                </button>
-              </li>
-            ))}
-          </ul>
+<ul>
+  {playlists.map(playlist => (
+    <li key={playlist.id}>
+      <button onClick={() => analyzeMood(playlist.id)}>{playlist.name}</button>
+    </li>
+  ))}
+</ul>
+
+<button onClick={analyzeMood}>Test Mood Analysis</button>
+
         </>
       )}
 
